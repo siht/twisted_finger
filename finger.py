@@ -1,32 +1,10 @@
-# como correr?
-# virtual env:
-# sudo /your/home/miniconda3/envs/twisted/bin/python /your/home/miniconda3/envs/twisted/bin/twistd -ny finger.tac
-# instalación default:
-# sudo twistd -ny finger.tac
-
-# los siguientes ejemplos son sugerencia del autor:
-
-# root% twistd -y finger.tac # daemonize, keep pid in twistd.pid
-# root% twistd -y finger.tac --pidfile=finger.pid
-# root% twistd -y finger.tac --rundir=/
-# root% twistd -y finger.tac --chroot=/var
-# root% twistd -y finger.tac -l /var/log/finger.log
-# root% twistd -y finger.tac --syslog # just log to syslog
-# root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
-
 from zope.interface import (
     Interface,
     implementer,
 )
-from OpenSSL import SSL
-from twisted.application import (
-    internet,
-    service,
-    strports,
-)
+from twisted.application import service
 from twisted.internet import (
     defer,
-    endpoints,
     protocol,
     reactor,
 )
@@ -318,54 +296,3 @@ class FingerService(service.Service): # de vuelta para desmostrar un punto
 
     def getUsers(self):
         return defer.succeed(list(self.users.keys()))
-
-
-# asegurate de correr como root este script antes de correr telnet
-
-# telnet localhost 79
-# mohsez(o el usuario que esté en tu archivo) [enter]
-# web browser
-#     -> localhost:8000/
-#     -> localhost:8000/user
-#     -> https://localhost/
-#     -> https://localhost/user
-# IRC
-# de preferencia instala tu propio servidor irc.
-# con un cliente de IRC:
-# entra al canal fingerbot y ahí escribe:
-# /msg fingerbot moshez
-#
-# xml-rpc -> use the fingerXRclient.py
-#
-# perspective broker -> use the fingerPBclient.py
-
-application = service.Application('finger', uid=1, gid=1) # como root
-f = FingerService('/etc/users')
-
-serviceCollection = service.IServiceCollection(application)
-f.setServiceParent(serviceCollection)
-# basicamnete explicado y sin animo de decir que así funciona
-# components.registerAdapter(FingerFactoryFromService, IFingerService, IFingerFactory) [línea 107]
-# más o menos quiere decir (de atrás para adelante)
-# cuando llame a IFingerFactory con un argumento/objeto que implemente IFingerService
-# traer adaptador FingerFactoryFromService
-# la magia que quieren aplicar es que pueden marcar una clase para poder traer su adaptador
-# o sea implementar POA y evitar duck typing o duck punching (supongo)
-strports.service('tcp:79', IFingerFactory(f)).setServiceParent(serviceCollection)
-site = server.Site(resource.IResource(f))
-strports.service('tcp:8000', site).setServiceParent(serviceCollection)
-# genera unas llaves, ve el tutorial o ejecuta la siguiente línea:
-# openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365
-# también asegurate de tener instalado pyopenssl y service_identity
-strports.service("ssl:port=443:certKey=cert.pem:privateKey=key.pem", site).setServiceParent(serviceCollection)
-# nota par el futuro, la línea de arriba debe estar justo ahí, por alguna razón la puse abajo
-# y no funcionaba. averiguar por qué
-strports.service('tcp:8889', pb.PBServerFactory(IPerspectiveFinger(f))).setServiceParent(serviceCollection)
-i = IIRCClientFactory(f)
-i.nickname = 'fingerbot'
-internet.ClientService(
-    endpoints.clientFromString(
-        reactor, 'tcp:irc.freenode.org:6667' # needs registration, suggest to install own server
-    ),
-    i,
-).setServiceParent(serviceCollection)
