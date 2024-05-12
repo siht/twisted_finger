@@ -29,6 +29,7 @@ from twisted.internet import (
     endpoints,
     protocol,
     reactor,
+    utils,
 )
 from twisted.protocols import basic
 from twisted.python import components
@@ -244,10 +245,29 @@ class UserStatusXR(xmlrpc.XMLRPC):
         return self.service.getUser(user)
 
 
-@implementer(IFingerService, IFingerSetterService)
-class MemoryFingerService(service.Service):
-    def __init__(self, users):
-        self.users = users
+@implementer(IFingerService)
+class FingerService(service.Service): # de vuelta para desmostrar un punto
+    def __init__(self, filename):
+        self.users = {}
+        self.filename = filename
+
+    def _read(self): # lee archivo cada 30s
+        self.users.clear()
+        with open(self.filename, 'rb') as f:
+            for line in f:
+                user, status = line.split(b':', 1)
+                user = user.strip()
+                status = status.strip()
+                self.users[user] = status
+        self.call = reactor.callLater(30, self._read)
+
+    def startService(self): # estos métodos ya estaban en service.Service
+        self._read()
+        service.Service.startService(self)
+
+    def stopService(self): # estos métodos ya estaban en service.Service
+        service.Service.stopService(self)
+        self.call.cancel()
 
     def getUser(self, user):
         if isinstance(user, str):
@@ -257,8 +277,15 @@ class MemoryFingerService(service.Service):
     def getUsers(self):
         return defer.succeed(list(self.users.keys()))
 
-    def setUser(self, user, status):
-        self.users[user] = status
+
+@implementer(IFingerService)
+class LocalFingerService(service.Service): # recuerda que debes tener instalado finger
+    def getUser(self, user):
+        # need a local finger daemon running for this to work
+        return utils.getProcessOutput(b'finger', [user]) # o pon otro comando
+
+    def getUsers(self):
+        return defer.succeed([])
 
 # asegurate de correr como root este script antes de correr telnet
 
@@ -276,10 +303,9 @@ class MemoryFingerService(service.Service):
 # xml-rpc -> use the fingerXRclient.py
 
 application = service.Application('finger', uid=1, gid=1) # como root
-f = MemoryFingerService({b'moshez': b'Happy and well'}) # volvemos a memoria
+f = LocalFingerService() # sustituimos el servicio
 
 serviceCollection = service.IServiceCollection(application)
-f.setServiceParent(serviceCollection)
 # basicamnete explicado y sin animo de decir que así funciona
 # components.registerAdapter(FingerFactoryFromService, IFingerService, IFingerFactory) [línea 107]
 # más o menos quiere decir (de atrás para adelante)
@@ -297,6 +323,3 @@ internet.ClientService(
     ),
     i,
 ).setServiceParent(serviceCollection)
-# se ve que no está ligado a la clase si no a la interfaz y por lo tanto no hay
-# dependencia fuerte
-strports.service('tcp:1079:interface=127.0.0.1', IFingerSetterFactory(f)).setServiceParent(serviceCollection)
