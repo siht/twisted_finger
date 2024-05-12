@@ -41,57 +41,46 @@ class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es 
         d.addCallback(writeResponse)
 
 
-class FingerSetterProtocol(basic.LineReceiver):
-    def connectionMade(self):
-        self.lines = []
+class FingerService(service.Service): # ahora puede cargar usuarios de un archivo
+    def __init__(self, filename):
+        self.users = {}
+        self.filename = filename
 
-    def lineReceived(self, line):
-        self.lines.append(line)
+    def _read(self): # lee archivo cada 30s
+        with open(self.filename, 'rb') as f:
+            for line in f:
+                user, status = line.split(b':', 1)
+                user = user.strip()
+                status = status.strip()
+                self.users[user] = status
+        self.call = reactor.callLater(30, self._read)
 
-    def connectionLost(self, reason):
-        user = self.lines[0]
-        status = self.lines[1]
-        self.factory.setUser(user, status)
+    def startService(self): # estos métodos ya estaban en service.Service
+        self._read()
+        service.Service.startService(self)
 
-
-class FingerService(service.Service): # tenemos que un servicio puede agrupar Factory
-    def __init__(self, users):
-        self.users = users
+    def stopService(self): # estos métodos ya estaban en service.Service
+        service.Service.stopService(self)
+        self.call.cancel()
 
     def getUser(self, user):
         return defer.succeed(self.users.get(user, b'No such user'))
 
-    def setUser(self, user, status):
-        self.users[user] = status
-
-    def getFingerFactory(self): # y los factory pueden ser hechos al vuelo
+    def getFingerFactory(self):
         f = protocol.ServerFactory()
         f.protocol = FingerProtocol
         f.getUser = self.getUser
-        return f
-
-    def getFingerSetterFactory(self): # y los factory pueden ser hechos al vuelo
-        f = protocol.ServerFactory()
-        f.protocol = FingerSetterProtocol
-        f.setUser = self.setUser
         return f
 
 
 # asegurate de correr como root este script antes de correr telnet
 
 # telnet localhost 79
-# mohsez [enter]
-
-# telnet localhost 1079
-# s [enter]
-# hey [enter]
-# crtl+]
-# crtl+d
+# mohsez(o el usuario que esté en tu archivo) [enter]
 
 application = service.Application('finger', uid=1, gid=1) # como root
-f = FingerService({b'moshez': b'Happy and well'})
+f = FingerService('/etc/users') # pon acá el nombre de un archivo x con -> usuario:mensaje
 
-serviceCollection = service.IServiceCollection(application)
-
-strports.service('tcp:79', f.getFingerFactory()).setServiceParent(serviceCollection)
-strports.service('tcp:1079', f.getFingerSetterFactory()).setServiceParent(serviceCollection)
+finger = strports.service('tcp:79', f.getFingerFactory())
+finger.setServiceParent(service.IServiceCollection(application))
+f.setServiceParent(service.IServiceCollection(application))
