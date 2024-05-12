@@ -30,6 +30,7 @@ from twisted.web import (
     resource,
     server,
     static,
+    xmlrpc,
 )
 from twisted.words.protocols import irc
 
@@ -91,6 +92,8 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
         self.call.cancel()
 
     def getUser(self, user):
+        if isinstance(user, str):
+            user = bytes(user, 'utf-8')
         return defer.succeed(self.users.get(user, b'No such user'))
 
     def getFingerFactory(self):
@@ -109,6 +112,9 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
             return static.Data(text, 'text/html')
         r = resource.Resource()
         r.getChild = getData
+        x = xmlrpc.XMLRPC()
+        x.xmlrpc_getUser = self.getUser
+        r.putChild(b'RPC2', x)
         return r
 
     def getIRCBot(self, nickname):
@@ -128,6 +134,8 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
 # con un cliente de IRC:
 # entra al canal fingerbot y ahí escribe:
 # /msg fingerbot moshez
+#
+# xml-rpc -> use the fingerXRclient.py
 
 application = service.Application('finger', uid=1, gid=1) # como root
 f = FingerService('/etc/users') # pon acá el nombre de un archivo x con -> usuario:mensaje
