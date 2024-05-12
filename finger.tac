@@ -15,6 +15,10 @@
 # root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
 
 import html
+from zope.interface import (
+    Interface,
+    implementer,
+)
 from twisted.application import (
     internet,
     service,
@@ -27,12 +31,40 @@ from twisted.internet import (
     reactor,
 )
 from twisted.protocols import basic
+from twisted.python import components
 from twisted.web import (
     resource,
     server,
     xmlrpc,
 )
 from twisted.words.protocols import irc
+
+
+def str2bytes(string):
+    return bytes(string, 'utf-8')
+
+
+def bytes2str(bbytes):
+    return bbytes.decode('utf-8')
+
+
+class IFingerService(Interface):
+    def getUser(user):
+        '''
+        Return a deferred returning L{bytes}.
+        '''
+
+    def getUsers():
+        '''
+        Return a deferred returning a L{list} of L{bytes}.
+        '''
+
+
+class IFingerSetterService(Interface):
+    def setUser(user, status):
+        '''
+        Set the user's status to something.
+        '''
 
 
 def catchError(err):
@@ -50,6 +82,70 @@ class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es 
         d.addCallback(writeValue)
 
 
+class IFingerFactory(Interface):
+    def getUser(user):
+        '''
+        Return a deferred returning L{bytes}
+        '''
+
+    def buildProtocol(addr):
+        '''
+        Return a protocol returning L{bytes}
+        '''
+
+
+@implementer(IFingerFactory)
+class FingerFactoryFromService(protocol.ServerFactory):
+    protocol = FingerProtocol
+
+    def __init__(self, service):
+        self.service = service
+
+    def getUser(self, user):
+        return self.service.getUser(user)
+
+components.registerAdapter(FingerFactoryFromService, IFingerService, IFingerFactory)
+
+
+class FingerSetterProtocol(basic.LineReceiver):
+    def connectionMade(self):
+        self.lines = []
+
+    def lineReceived(self, line):
+        self.lines.append(line)
+
+    def connectionLost(self, reason):
+        if len(self.lines) == 2:
+            self.factory.setUser(*self.lines)
+
+
+class IFingerSetterFactory(Interface):
+    def setUser(user, status):
+        '''
+        Return a deferred returning L{bytes}.
+        '''
+
+    def buildProtocol(addr):
+        '''
+        Return a protocol returning L{bytes}.
+        '''
+
+
+@implementer(IFingerSetterFactory)
+class FingerSetterFactoryFromService(protocol.ServerFactory):
+    protocol = FingerSetterProtocol
+
+    def __init__(self, service):
+        self.service = service
+
+    def setUser(self, user, status):
+        self.service.setUser(user, status)
+
+components.registerAdapter(
+    FingerSetterFactoryFromService, IFingerSetterService, IFingerSetterFactory
+)
+
+
 class IRCReplyBot(irc.IRCClient):
     def connectionMade(self):
         self.nickname = self.factory.nickname
@@ -60,33 +156,68 @@ class IRCReplyBot(irc.IRCClient):
         if self.nickname.lower() == channel.lower():
             d = self.factory.getUser(msg.encode('ascii'))
             d.addErrback(catchError)
-            d.addCallback(lambda m: f'Status of {msg}: {m.decode("utf-8")}') # generamos el string
+            d.addCallback(lambda m: f'Status of {msg}: {bytes2str(m)}') # generamos el string
             d.addCallback(lambda m: self.msg(user, m)) # mandamos el string
 
 
+class IIRCClientFactory(Interface):
+    '''
+    @ivar nickname
+    '''
+
+    def getUser(user):
+        '''
+        Return a deferred returning a string.
+        '''
+
+    def buildProtocol(addr):
+        '''
+        Return a protocol.
+        '''
+
+
+@implementer(IIRCClientFactory)
+class IRCClientFactoryFromService(protocol.ClientFactory):
+    protocol = IRCReplyBot
+    nickname = None
+
+    def __init__(self, service):
+        self.service = service
+
+    def getUser(self, user):
+        return self.service.getUser(user)
+
+components.registerAdapter(
+    IRCClientFactoryFromService, IFingerService, IIRCClientFactory
+)
+
+
+@implementer(resource.IResource)
 class UserStatusTree(resource.Resource):
     def __init__(self, service):
         resource.Resource.__init__(self)
         self.service = service
+        self.putChild(b'RPC2', UserStatusXR(self.service))
 
     def render_GET(self, request):
         d = self.service.getUsers()
         def formatUsers(users):
             l = [f'<li><a href="{user}">{user}</a></li>' for user in users]
-            return "<ul>" + "".join(l) + "</ul>"
-        d.addCallback(lambda x: [u.decode('utf-8') for u in x])
+            return '<ul>' + ''.join(l) + '</ul>'
+        d.addCallback(lambda x: [bytes2str(u) for u in x])
         d.addCallback(formatUsers)
-        d.addCallback(lambda x: bytes(x, 'utf-8'))
+        d.addCallback(str2bytes)
         d.addCallback(request.write)
         d.addCallback(lambda _: request.finish())
         return server.NOT_DONE_YET
 
     def getChild(self, path, request):
-        if path == b"":
+        if path == b'':
             return UserStatusTree(self.service)
         else:
             return UserStatus(path, self.service)
 
+components.registerAdapter(UserStatusTree, IFingerService, resource.IResource)
 
 class UserStatus(resource.Resource):
     def __init__(self, user, service):
@@ -96,10 +227,10 @@ class UserStatus(resource.Resource):
 
     def render_GET(self, request):
         d = self.service.getUser(self.user)
-        d.addCallback(lambda x: x.decode('utf-8'))
+        d.addCallback(bytes2str)
         d.addCallback(html.escape)
-        d.addCallback(lambda x: bytes(x, 'utf-8'))
-        d.addCallback(lambda m: b"<h1>%s</h1>" % self.user + b"<p>%s</p>" % m)
+        d.addCallback(str2bytes)
+        d.addCallback(lambda m: b'<h1>%s</h1>' % self.user + b'<p>%s</p>' % m)
         d.addCallback(request.write)
         d.addCallback(lambda _: request.finish())
         return server.NOT_DONE_YET
@@ -113,6 +244,7 @@ class UserStatusXR(xmlrpc.XMLRPC):
         return self.service.getUser(user)
 
 
+@implementer(IFingerService)
 class FingerService(service.Service): # ahora puede cargar usuarios de un archivo
     def __init__(self, filename):
         self.users = {}
@@ -138,30 +270,11 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
 
     def getUser(self, user):
         if isinstance(user, str):
-            user = bytes(user, 'utf-8')
+            user = bytes2str(user)
         return defer.succeed(self.users.get(user, b'No such user'))
 
     def getUsers(self):
         return defer.succeed(list(self.users.keys()))
-
-    def getFingerFactory(self):
-        f = protocol.ServerFactory()
-        f.protocol = FingerProtocol
-        f.getUser = self.getUser
-        return f
-
-    def getResource(self): # tambien se pueden hacer resources al vuelo
-        r = UserStatusTree(self)
-        x = UserStatusXR(self)
-        r.putChild(b'RPC2', x)
-        return r
-
-    def getIRCBot(self, nickname):
-        f = protocol.ClientFactory()
-        f.protocol = IRCReplyBot
-        f.nickname = nickname
-        f.getUser = self.getUser
-        return f
 
 # asegurate de correr como root este script antes de correr telnet
 
@@ -183,12 +296,20 @@ f = FingerService('/etc/users') # pon acá el nombre de un archivo x con -> usua
 
 serviceCollection = service.IServiceCollection(application)
 f.setServiceParent(serviceCollection)
-
-strports.service('tcp:79', f.getFingerFactory()).setServiceParent(serviceCollection)
-strports.service('tcp:8000', server.Site(f.getResource())).setServiceParent(serviceCollection)
+# basicamnete explicado y sin animo de decir que así funciona
+# components.registerAdapter(FingerFactoryFromService, IFingerService, IFingerFactory) [línea 107]
+# más o menos quiere decir (de atrás para adelante)
+# cuando llame a IFingerFactory con un argumento/objeto que implemente IFingerService
+# traer adaptador FingerFactoryFromService
+# la magia que quieren aplicar es que pueden marcar una clase para poder traer su adaptador
+# o sea implementar POA y evitar duck typing o duck punching (supongo)
+strports.service('tcp:79', IFingerFactory(f)).setServiceParent(serviceCollection)
+strports.service('tcp:8000', server.Site(resource.IResource(f))).setServiceParent(serviceCollection)
+i = IIRCClientFactory(f)
+i.nickname = 'fingerbot'
 internet.ClientService(
     endpoints.clientFromString(
         reactor, 'tcp:irc.freenode.org:6667' # needs registration, suggest to install own server
     ),
-    f.getIRCBot('fingerbot'),
+    i,
 ).setServiceParent(serviceCollection)
