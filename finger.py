@@ -7,21 +7,18 @@ from twisted.internet import (
 )
 
 
-class FingerProtocol(protocol.Protocol): # basicamente su trabajo es escuchar y enviar, y tener una lógica de protocolo no de negocio
-    pass
+class FingerProtocol(protocol.Protocol): # ofrecemos la primera lógica. al recibir la conexión se la cerramos
+    def connectionMade(self):
+        self.transport.loseConnection()
 
 
-class FingerFactory(protocol.ServerFactory): # su trabajo es ofrecer lógica de negocio y datos
+class FingerFactory(protocol.ServerFactory):
     protocol = FingerProtocol
 
 
 def main():
-    # como funciona twisted Enpoint(Factory(Protocol))
-    # resumiendo de manera sencilla necesitas un punto de acceso (Endpoint)
-    # que escuche un factory que a su vez tenga un protocolo de comunicacion
-    # qué hace esto? nada. el protocolo no hace algo y no hay datos, pero puedes
-    # ir a una consola y escribir `telnet localhost 1079` y te dará un prompt que
-    # hace nada
+    # qué hace esto? al abrir una consola y escribir `telnet localhost 1079` te cierra la conexión
+    # eso lo hace la lógica del protocolo
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
     fingerEndpoint.listen(FingerFactory())
     reactor.run()
