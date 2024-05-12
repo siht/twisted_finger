@@ -14,13 +14,14 @@
 # root% twistd -y finger.tac --syslog # just log to syslog
 # root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
 
-import html
 from twisted.application import (
+    internet,
     service,
     strports,
 )
 from twisted.internet import (
     defer,
+    endpoints,
     protocol,
     reactor,
 )
@@ -30,6 +31,7 @@ from twisted.web import (
     server,
     static,
 )
+from twisted.words.protocols import irc
 
 
 class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es asíncrono
@@ -46,30 +48,23 @@ class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es 
         d.addCallback(writeResponse)
 
 
-class FingerResource(resource.Resource):
-    def __init__(self, users):
-        self.users = users
-        resource.Resource.__init__(self)
-        # we treat the path as the username
+class IRCReplyBot(irc.IRCClient):
+    def connectionMade(self):
+        self.nickname = self.factory.nickname
+        irc.IRCClient.connectionMade(self)
 
-    def getChild(self, username, request):
-        '''
-        'username' is L{bytes}.
-        'request' is a 'twisted.web.server.Request'.
-        '''
-        messagevalue = self.users.get(username)
-        if messagevalue:
-            messagevalue = messagevalue.decode('ascii')
-        if username:
-            username = username.decode('ascii')
-        username = html.escape(username)
-        if messagevalue is not None:
-            messagevalue = html.escape(messagevalue)
-            text = f'<h1>{username}</h1><p>{messagevalue}</p>'
-        else:
-            text = f'<h1>{username}</h1><p>No such user</p>'
-        text = text.encode('ascii')
-        return static.Data(text, 'text/html')
+    def privmsg(self, user, channel, msg):
+        user = user.split('!')[0]
+        if self.nickname.lower() == channel.lower():
+            d = self.factory.getUser(msg.encode('ascii'))
+            def onError(err):
+                return b'Internal error in server'
+            d.addErrback(onError)
+
+            def writeResponse(message):
+                message = message.decode('ascii')
+                irc.IRCClient.msg(self, user, msg + ': ' + message)
+            d.addCallback(writeResponse)
 
 
 class FingerService(service.Service): # ahora puede cargar usuarios de un archivo
@@ -104,15 +99,35 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
         f.getUser = self.getUser
         return f
 
-    def getResource(self):
-        r = FingerResource(self.users)
+    def getResource(self): # tambien se pueden hacer resources al vuelo
+        def getData(path, request):
+            user = self.users.get(path, b'No such users <p/> usage: site/user')
+            path = path.decode('ascii')
+            user = user.decode('ascii')
+            text = f'<h1>{path}</h1><p>{user}</p>'
+            text = text.encode('ascii')
+            return static.Data(text, 'text/html')
+        r = resource.Resource()
+        r.getChild = getData
         return r
+
+    def getIRCBot(self, nickname):
+        f = protocol.ClientFactory()
+        f.protocol = IRCReplyBot
+        f.nickname = nickname
+        f.getUser = self.getUser
+        return f
 
 # asegurate de correr como root este script antes de correr telnet
 
 # telnet localhost 79
 # mohsez(o el usuario que esté en tu archivo) [enter]
 # web browser -> localhost:8000/user
+# IRC
+# de preferencia instala tu propio servidor irc.
+# con un cliente de IRC:
+# entra al canal fingerbot y ahí escribe:
+# /msg fingerbot moshez
 
 application = service.Application('finger', uid=1, gid=1) # como root
 f = FingerService('/etc/users') # pon acá el nombre de un archivo x con -> usuario:mensaje
@@ -122,3 +137,9 @@ f.setServiceParent(serviceCollection)
 
 strports.service('tcp:79', f.getFingerFactory()).setServiceParent(serviceCollection)
 strports.service('tcp:8000', server.Site(f.getResource())).setServiceParent(serviceCollection)
+internet.ClientService(
+    endpoints.clientFromString(
+        reactor, 'tcp:irc.freenode.org:6667' # needs registration, suggest to install own server
+    ),
+    f.getIRCBot('fingerbot'),
+).setServiceParent(serviceCollection)
