@@ -4,9 +4,9 @@ from twisted.internet import (
     endpoints,
     protocol,
     reactor,
-    utils,
 )
 from twisted.protocols import basic
+from twisted.web import client
 
 
 class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es asíncrono
@@ -24,25 +24,26 @@ class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es 
 
 
 class FingerFactory(protocol.ServerFactory):
-    protocol = FingerProtocol # cuando registramos el protocolo dentro del factory se crea una propiedad dentro del protocol para acceder
+    protocol = FingerProtocol
 
-    def __init__(self, users):
-        self.users = users
+    def __init__(self, prefix):
+        self.prefix = prefix
 
     def getUser(self, user):
-        return utils.getProcessOutput(b'finger', [user]) # ahora si tienes instalado finger recibirás la salida finger de tu local
+        return client.getPage(self.prefix + user) # recuerda el tutorial es antiguo y esto no funciona
 
+# se supone client.getPage sirve para traer datos de internet de forma asíncrona
+# además no podemos utilizar cualquier herramienta que no sea compatible con el
+# reactor o el event manager, la tristeza nos invade
 
 def main():
     # qué hace esto? al abrir una consola y escribir `telnet localhost 1079`
-    # escribes el nombre de un usuario moshez regresa: Happy and well
-    # cualquier otro nombre te regresa: No such user
-    # ahora ya hay una fuente de datos intercambiable y tenemos nuestra primera db (un diccionario)
-    # que de momento es sustituida por el comando finger de tu computadora
-    # ahora si ya es finger, si no tienes finger ponle dir o un comnado de tu computadora
-    # en caso de no querer instalar finger
+    # escribes el nombre de un usuario moshez regresa: el contenido de una web
+    # ahora ya hay una fuente de datos intercambiable que seguimos cambiando
+    # en este caso es una url y vamos a traer la info desde la red, recuerda
+    # si esto no fuera asíncrono porbablemente se tardaría la ejecución
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
-    fingerEndpoint.listen(FingerFactory({b'moshez': b'Happy and well'}))
+    fingerEndpoint.listen(FingerFactory(prefix=b'http://livejournal.com/~'))
     reactor.run()
 
 
