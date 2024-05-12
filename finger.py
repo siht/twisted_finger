@@ -1,6 +1,7 @@
 # como correr?
 # python finger.py
 from twisted.internet import (
+    defer,
     endpoints,
     protocol,
     reactor,
@@ -8,10 +9,18 @@ from twisted.internet import (
 from twisted.protocols import basic
 
 
-class FingerProtocol(basic.LineReceiver):
-    def lineReceived(self, user): # ahora nuestra fuente de los datos es el factory
-        self.transport.write(self.factory.getUser(user) + b'\r\n')
-        self.transport.loseConnection()
+class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es asíncrono
+    def lineReceived(self, user): # vamos a usar asincronicidad y el get user nos regresará un objeto Defer
+        d = self.factory.getUser(user)
+
+        def onError(err): # al cual le vamos a agregar callbacks (este es un error callback)
+            return b'Internal error in server'
+        d.addErrback(onError)
+
+        def writeResponse(message): # este callback es cuando la información llegue correctamente
+            self.transport.write(message + b'\r\n') # le regresamos al cliente la respuesta
+            self.transport.loseConnection()
+        d.addCallback(writeResponse)
 
 
 class FingerFactory(protocol.ServerFactory):
@@ -21,7 +30,7 @@ class FingerFactory(protocol.ServerFactory):
         self.users = users
 
     def getUser(self, user):
-        return self.users.get(user, b'No such user')
+        return defer.succeed(self.users.get(user, b'No such user')) # defer.succeed hace lo bloqueanto como no bloqueante y regresa un defer
 
 
 def main():
