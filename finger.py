@@ -68,7 +68,7 @@ class FingerFactory(protocol.ServerFactory):
         self.prefix = prefix
 
     def getUser(self, user):
-        return getPage(self.prefix + user) # pero ahora ya tenemos un heroe
+        return getPage(self.prefix % user)
 
 
 def main():
@@ -77,9 +77,8 @@ def main():
     # ahora ya hay una fuente de datos intercambiable que seguimos cambiando
     # en este caso es una url y vamos a traer la info desde la red, recuerda
     # si esto no fuera asíncrono porbablemente se tardaría la ejecución
-    # ahora nos regresa que el contenido se ha movido, pero ya tenemos respuesta :3
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
-    fingerEndpoint.listen(FingerFactory(prefix=b'http://livejournal.com/~'))
+    fingerEndpoint.listen(FingerFactory(prefix=b'https://%s.livejournal.com/'))
     reactor.run()
 
 
