@@ -1,50 +1,30 @@
 # como correr?
-# python finger.py
+# virtual env:
+# sudo /your/home/miniconda3/envs/twisted/bin/python /your/home/miniconda3/envs/twisted/bin/twistd -ny finger.tac
+# instalación default:
+# sudo twistd -ny finger.tac
+
+# los siguientes ejemplos son sugerencia del autor:
+
+# root% twistd -y finger.tac # daemonize, keep pid in twistd.pid
+# root% twistd -y finger.tac --pidfile=finger.pid
+# root% twistd -y finger.tac --rundir=/
+# root% twistd -y finger.tac --chroot=/var
+# root% twistd -y finger.tac -l /var/log/finger.log
+# root% twistd -y finger.tac --syslog # just log to syslog
+# root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
+
+
+from twisted.application import (
+    service,
+    strports,
+)
 from twisted.internet import (
-    endpoints,
+    defer,
     protocol,
     reactor,
 )
-from twisted.internet.defer import Deferred
 from twisted.protocols import basic
-from twisted.web.client import (
-    Agent,
-    Headers,
-)
-
-
-class WebPageDataGetterProtocol(protocol.Protocol):
-    def __init__(self, finished):
-        self.finished = finished
-        self.remaining = 1024 * 10
-        self.buffer = b''
-
-    def dataReceived(self, bytes):
-        if self.remaining:
-            display = bytes[:self.remaining]
-            self.buffer += display
-            self.remaining -= len(display)
-
-    def connectionLost(self, reason):
-        self.finished.callback(self.buffer)
-
-
-def getPage(url): # hacemos nuestro propio getPage asíncrono con las herramientas de twisted
-    agent = Agent(reactor)
-    d = agent.request(
-        b'GET',
-        url,
-        Headers({'User-Agent': ['Twisted Web Client Example']}),
-        None
-    )
-
-    def get_content(response):
-        finished = Deferred()
-        response.deliverBody(WebPageDataGetterProtocol(finished))
-        return finished
-    d.addCallback(get_content)
-
-    return d
 
 
 class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es asíncrono
@@ -64,23 +44,23 @@ class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es 
 class FingerFactory(protocol.ServerFactory):
     protocol = FingerProtocol
 
-    def __init__(self, prefix):
-        self.prefix = prefix
+    def __init__(self, users):
+        self.users = users
 
     def getUser(self, user):
-        return getPage(self.prefix % user)
+        return defer.succeed(self.users.get(user, b'No such user'))
 
 
-def main():
-    # qué hace esto? al abrir una consola y escribir `telnet localhost 1079`
-    # escribes el nombre de un usuario moshez regresa: el contenido de una web
-    # ahora ya hay una fuente de datos intercambiable que seguimos cambiando
-    # en este caso es una url y vamos a traer la info desde la red, recuerda
-    # si esto no fuera asíncrono porbablemente se tardaría la ejecución
-    fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
-    fingerEndpoint.listen(FingerFactory(prefix=b'https://%s.livejournal.com/'))
-    reactor.run()
-
-
-if __name__ == '__main__':
-    main()
+# aun no se porque falla cuando está dentro de una función cuando es servicio
+# asegurate de correr como root este script antes de correr telnet
+# telnet localhost 79
+# mohsez [enter]
+application = service.Application('finger', uid=1, gid=1) # como root
+factory = FingerFactory({b'moshez': b'Happy and well'})
+strports.service(
+    'tcp:79', # puerto de finger
+    factory,
+    reactor=reactor
+).setServiceParent(
+    service.IServiceCollection(application) # atencion a este. no lo explicaré aun
+)
