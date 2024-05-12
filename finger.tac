@@ -31,6 +31,7 @@ from twisted.internet import (
 )
 from twisted.protocols import basic
 from twisted.python import components
+from twisted.spread import pb
 from twisted.web import (
     resource,
     server,
@@ -257,6 +258,34 @@ class UserStatusXR(xmlrpc.XMLRPC):
         return self.service.getUser(user)
 
 
+class IPerspectiveFinger(Interface):
+    def remote_getUser(username):
+        '''
+        Return a user's status.
+        '''
+
+    def remote_getUsers():
+        '''
+        Return a user's status.
+        '''
+
+
+@implementer(IPerspectiveFinger)
+class PerspectiveFingerFromService(pb.Root):
+    def __init__(self, service):
+        self.service = service
+
+    def remote_getUser(self, username):
+        return self.service.getUser(username)
+
+    def remote_getUsers(self):
+        return self.service.getUsers()
+
+components.registerAdapter(
+    PerspectiveFingerFromService, IFingerService, IPerspectiveFinger
+)
+
+
 @implementer(IFingerService)
 class FingerService(service.Service): # de vuelta para desmostrar un punto
     def __init__(self, filename):
@@ -283,7 +312,7 @@ class FingerService(service.Service): # de vuelta para desmostrar un punto
 
     def getUser(self, user):
         if isinstance(user, str):
-            user = bytes2str(user)
+            user = str2bytes(user)
         return defer.succeed(self.users.get(user, b'No such user'))
 
     def getUsers(self):
@@ -304,6 +333,8 @@ class FingerService(service.Service): # de vuelta para desmostrar un punto
 # /msg fingerbot moshez
 #
 # xml-rpc -> use the fingerXRclient.py
+#
+# perspective broker -> use the fingerPBclient.py
 
 application = service.Application('finger', uid=1, gid=1) # como root
 f = FingerService('/etc/users')
@@ -319,6 +350,7 @@ f.setServiceParent(serviceCollection)
 # o sea implementar POA y evitar duck typing o duck punching (supongo)
 strports.service('tcp:79', IFingerFactory(f)).setServiceParent(serviceCollection)
 strports.service('tcp:8000', server.Site(resource.IResource(f))).setServiceParent(serviceCollection)
+strports.service('tcp:8889', pb.PBServerFactory(IPerspectiveFinger(f))).setServiceParent(serviceCollection)
 i = IIRCClientFactory(f)
 i.nickname = 'fingerbot'
 internet.ClientService(
