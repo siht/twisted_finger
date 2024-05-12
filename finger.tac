@@ -18,6 +18,7 @@ from zope.interface import (
     Interface,
     implementer,
 )
+from OpenSSL import SSL
 from twisted.application import (
     internet,
     service,
@@ -326,6 +327,8 @@ class FingerService(service.Service): # de vuelta para desmostrar un punto
 # web browser
 #     -> localhost:8000/
 #     -> localhost:8000/user
+#     -> https://localhost/
+#     -> https://localhost/user
 # IRC
 # de preferencia instala tu propio servidor irc.
 # con un cliente de IRC:
@@ -349,7 +352,14 @@ f.setServiceParent(serviceCollection)
 # la magia que quieren aplicar es que pueden marcar una clase para poder traer su adaptador
 # o sea implementar POA y evitar duck typing o duck punching (supongo)
 strports.service('tcp:79', IFingerFactory(f)).setServiceParent(serviceCollection)
-strports.service('tcp:8000', server.Site(resource.IResource(f))).setServiceParent(serviceCollection)
+site = server.Site(resource.IResource(f))
+strports.service('tcp:8000', site).setServiceParent(serviceCollection)
+# genera unas llaves, ve el tutorial o ejecuta la siguiente línea:
+# openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365
+# también asegurate de tener instalado pyopenssl y service_identity
+strports.service("ssl:port=443:certKey=cert.pem:privateKey=key.pem", site).setServiceParent(serviceCollection)
+# nota par el futuro, la línea de arriba debe estar justo ahí, por alguna razón la puse abajo
+# y no funcionaba. averiguar por qué
 strports.service('tcp:8889', pb.PBServerFactory(IPerspectiveFinger(f))).setServiceParent(serviceCollection)
 i = IIRCClientFactory(f)
 i.nickname = 'fingerbot'
