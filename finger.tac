@@ -244,29 +244,10 @@ class UserStatusXR(xmlrpc.XMLRPC):
         return self.service.getUser(user)
 
 
-@implementer(IFingerService)
-class FingerService(service.Service): # ahora puede cargar usuarios de un archivo
-    def __init__(self, filename):
-        self.users = {}
-        self.filename = filename
-
-    def _read(self): # lee archivo cada 30s
-        self.users.clear()
-        with open(self.filename, 'rb') as f:
-            for line in f:
-                user, status = line.split(b':', 1)
-                user = user.strip()
-                status = status.strip()
-                self.users[user] = status
-        self.call = reactor.callLater(30, self._read)
-
-    def startService(self): # estos métodos ya estaban en service.Service
-        self._read()
-        service.Service.startService(self)
-
-    def stopService(self): # estos métodos ya estaban en service.Service
-        service.Service.stopService(self)
-        self.call.cancel()
+@implementer(IFingerService, IFingerSetterService)
+class MemoryFingerService(service.Service):
+    def __init__(self, users):
+        self.users = users
 
     def getUser(self, user):
         if isinstance(user, str):
@@ -275,6 +256,9 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
 
     def getUsers(self):
         return defer.succeed(list(self.users.keys()))
+
+    def setUser(self, user, status):
+        self.users[user] = status
 
 # asegurate de correr como root este script antes de correr telnet
 
@@ -292,7 +276,7 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
 # xml-rpc -> use the fingerXRclient.py
 
 application = service.Application('finger', uid=1, gid=1) # como root
-f = FingerService('/etc/users') # pon acá el nombre de un archivo x con -> usuario:mensaje
+f = MemoryFingerService({b'moshez': b'Happy and well'}) # volvemos a memoria
 
 serviceCollection = service.IServiceCollection(application)
 f.setServiceParent(serviceCollection)
@@ -313,3 +297,6 @@ internet.ClientService(
     ),
     i,
 ).setServiceParent(serviceCollection)
+# se ve que no está ligado a la clase si no a la interfaz y por lo tanto no hay
+# dependencia fuerte
+strports.service('tcp:1079:interface=127.0.0.1', IFingerSetterFactory(f)).setServiceParent(serviceCollection)
