@@ -5,8 +5,46 @@ from twisted.internet import (
     protocol,
     reactor,
 )
+from twisted.internet.defer import Deferred
 from twisted.protocols import basic
-from twisted.web import client
+from twisted.web.client import (
+    Agent,
+    Headers,
+)
+
+
+class WebPageDataGetterProtocol(protocol.Protocol):
+    def __init__(self, finished):
+        self.finished = finished
+        self.remaining = 1024 * 10
+        self.buffer = b''
+
+    def dataReceived(self, bytes):
+        if self.remaining:
+            display = bytes[:self.remaining]
+            self.buffer += display
+            self.remaining -= len(display)
+
+    def connectionLost(self, reason):
+        self.finished.callback(self.buffer)
+
+
+def getPage(url): # hacemos nuestro propio getPage asíncrono con las herramientas de twisted
+    agent = Agent(reactor)
+    d = agent.request(
+        b'GET',
+        url,
+        Headers({'User-Agent': ['Twisted Web Client Example']}),
+        None
+    )
+
+    def get_content(response):
+        finished = Deferred()
+        response.deliverBody(WebPageDataGetterProtocol(finished))
+        return finished
+    d.addCallback(get_content)
+
+    return d
 
 
 class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es asíncrono
@@ -30,11 +68,8 @@ class FingerFactory(protocol.ServerFactory):
         self.prefix = prefix
 
     def getUser(self, user):
-        return client.getPage(self.prefix + user) # recuerda el tutorial es antiguo y esto no funciona
+        return getPage(self.prefix + user) # pero ahora ya tenemos un heroe
 
-# se supone client.getPage sirve para traer datos de internet de forma asíncrona
-# además no podemos utilizar cualquier herramienta que no sea compatible con el
-# reactor o el event manager, la tristeza nos invade
 
 def main():
     # qué hace esto? al abrir una consola y escribir `telnet localhost 1079`
@@ -42,6 +77,7 @@ def main():
     # ahora ya hay una fuente de datos intercambiable que seguimos cambiando
     # en este caso es una url y vamos a traer la info desde la red, recuerda
     # si esto no fuera asíncrono porbablemente se tardaría la ejecución
+    # ahora nos regresa que el contenido se ha movido, pero ya tenemos respuesta :3
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
     fingerEndpoint.listen(FingerFactory(prefix=b'http://livejournal.com/~'))
     reactor.run()
