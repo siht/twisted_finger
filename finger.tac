@@ -14,6 +14,7 @@
 # root% twistd -y finger.tac --syslog # just log to syslog
 # root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
 
+import html
 from twisted.application import (
     internet,
     service,
@@ -29,24 +30,24 @@ from twisted.protocols import basic
 from twisted.web import (
     resource,
     server,
-    static,
     xmlrpc,
 )
 from twisted.words.protocols import irc
 
 
+def catchError(err):
+    return 'Internal error in server'
+
+
 class FingerProtocol(basic.LineReceiver): # a partir de ahora este protocolo es asíncrono
     def lineReceived(self, user): # vamos a usar asincronicidad y el get user nos regresará un objeto Defer
         d = self.factory.getUser(user)
+        d.addErrback(catchError) # puedes usar cualquier funcion como callback
 
-        def onError(err): # al cual le vamos a agregar callbacks (este es un error callback)
-            return b'Internal error in server'
-        d.addErrback(onError)
-
-        def writeResponse(message): # este callback es cuando la información llegue correctamente
-            self.transport.write(message + b'\r\n') # le regresamos al cliente la respuesta
+        def writeValue(value): # este callback es cuando la información llegue correctamente
+            self.transport.write(value + b'\r\n') # le regresamos al cliente la respuesta
             self.transport.loseConnection()
-        d.addCallback(writeResponse)
+        d.addCallback(writeValue)
 
 
 class IRCReplyBot(irc.IRCClient):
@@ -58,14 +59,58 @@ class IRCReplyBot(irc.IRCClient):
         user = user.split('!')[0]
         if self.nickname.lower() == channel.lower():
             d = self.factory.getUser(msg.encode('ascii'))
-            def onError(err):
-                return b'Internal error in server'
-            d.addErrback(onError)
+            d.addErrback(catchError)
+            d.addCallback(lambda m: f'Status of {msg}: {m.decode("utf-8")}') # generamos el string
+            d.addCallback(lambda m: self.msg(user, m)) # mandamos el string
 
-            def writeResponse(message):
-                message = message.decode('ascii')
-                irc.IRCClient.msg(self, user, msg + ': ' + message)
-            d.addCallback(writeResponse)
+
+class UserStatusTree(resource.Resource):
+    def __init__(self, service):
+        resource.Resource.__init__(self)
+        self.service = service
+
+    def render_GET(self, request):
+        d = self.service.getUsers()
+        def formatUsers(users):
+            l = [f'<li><a href="{user}">{user}</a></li>' for user in users]
+            return "<ul>" + "".join(l) + "</ul>"
+        d.addCallback(lambda x: [u.decode('utf-8') for u in x])
+        d.addCallback(formatUsers)
+        d.addCallback(lambda x: bytes(x, 'utf-8'))
+        d.addCallback(request.write)
+        d.addCallback(lambda _: request.finish())
+        return server.NOT_DONE_YET
+
+    def getChild(self, path, request):
+        if path == b"":
+            return UserStatusTree(self.service)
+        else:
+            return UserStatus(path, self.service)
+
+
+class UserStatus(resource.Resource):
+    def __init__(self, user, service):
+        resource.Resource.__init__(self)
+        self.user = user
+        self.service = service
+
+    def render_GET(self, request):
+        d = self.service.getUser(self.user)
+        d.addCallback(lambda x: x.decode('utf-8'))
+        d.addCallback(html.escape)
+        d.addCallback(lambda x: bytes(x, 'utf-8'))
+        d.addCallback(lambda m: b"<h1>%s</h1>" % self.user + b"<p>%s</p>" % m)
+        d.addCallback(request.write)
+        d.addCallback(lambda _: request.finish())
+        return server.NOT_DONE_YET
+
+class UserStatusXR(xmlrpc.XMLRPC):
+    def __init__(self, service):
+        xmlrpc.XMLRPC.__init__(self)
+        self.service = service
+
+    def xmlrpc_getUser(self, user):
+        return self.service.getUser(user)
 
 
 class FingerService(service.Service): # ahora puede cargar usuarios de un archivo
@@ -96,6 +141,9 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
             user = bytes(user, 'utf-8')
         return defer.succeed(self.users.get(user, b'No such user'))
 
+    def getUsers(self):
+        return defer.succeed(list(self.users.keys()))
+
     def getFingerFactory(self):
         f = protocol.ServerFactory()
         f.protocol = FingerProtocol
@@ -103,17 +151,8 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
         return f
 
     def getResource(self): # tambien se pueden hacer resources al vuelo
-        def getData(path, request):
-            user = self.users.get(path, b'No such users <p/> usage: site/user')
-            path = path.decode('ascii')
-            user = user.decode('ascii')
-            text = f'<h1>{path}</h1><p>{user}</p>'
-            text = text.encode('ascii')
-            return static.Data(text, 'text/html')
-        r = resource.Resource()
-        r.getChild = getData
-        x = xmlrpc.XMLRPC()
-        x.xmlrpc_getUser = self.getUser
+        r = UserStatusTree(self)
+        x = UserStatusXR(self)
         r.putChild(b'RPC2', x)
         return r
 
@@ -128,7 +167,9 @@ class FingerService(service.Service): # ahora puede cargar usuarios de un archiv
 
 # telnet localhost 79
 # mohsez(o el usuario que esté en tu archivo) [enter]
-# web browser -> localhost:8000/user
+# web browser
+#     -> localhost:8000/
+#     -> localhost:8000/user
 # IRC
 # de preferencia instala tu propio servidor irc.
 # con un cliente de IRC:
