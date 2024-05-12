@@ -15,6 +15,8 @@
 # root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
 
 import html
+import os
+import pwd
 from zope.interface import (
     Interface,
     implementer,
@@ -29,7 +31,6 @@ from twisted.internet import (
     endpoints,
     protocol,
     reactor,
-    utils,
 )
 from twisted.protocols import basic
 from twisted.python import components
@@ -281,8 +282,20 @@ class FingerService(service.Service): # de vuelta para desmostrar un punto
 @implementer(IFingerService)
 class LocalFingerService(service.Service): # recuerda que debes tener instalado finger
     def getUser(self, user):
-        # need a local finger daemon running for this to work
-        return utils.getProcessOutput(b'finger', [user]) # o pon otro comando
+        user = bytes2str(user)
+        user = user.strip()
+        try:
+            entry = pwd.getpwnam(user)
+        except KeyError:
+            return defer.succeed(b'No such user')
+        try:
+            f = open(os.path.join(entry[5], '.plan'))
+        except OSError:
+            return defer.succeed(b'No such user')
+        with f:
+            data = f.read()
+        data = str2bytes(data.strip())
+        return defer.succeed(data)
 
     def getUsers(self):
         return defer.succeed([])
@@ -303,7 +316,7 @@ class LocalFingerService(service.Service): # recuerda que debes tener instalado 
 # xml-rpc -> use the fingerXRclient.py
 
 application = service.Application('finger', uid=1, gid=1) # como root
-f = LocalFingerService() # sustituimos el servicio
+f = LocalFingerService() # en cada home de nuestros usuarios del sistema ponemos un archivo .plan con texto
 
 serviceCollection = service.IServiceCollection(application)
 # basicamnete explicado y sin animo de decir que así funciona
