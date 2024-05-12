@@ -51,16 +51,45 @@ class FingerFactory(protocol.ServerFactory):
         return defer.succeed(self.users.get(user, b'No such user'))
 
 
-# aun no se porque falla cuando está dentro de una función cuando es servicio
+class FingerSetterProtocol(basic.LineReceiver):
+    def connectionMade(self):
+        self.lines = []
+
+    def lineReceived(self, line):
+        self.lines.append(line)
+
+    def connectionLost(self, reason):
+        user = self.lines[0]
+        status = self.lines[1]
+        self.factory.setUser(user, status)
+
+
+class FingerSetterFactory(protocol.ServerFactory):
+    protocol = FingerSetterProtocol
+
+    def __init__(self, fingerFactory):
+        self.fingerFactory = fingerFactory
+
+    def setUser(self, user, status):
+        self.fingerFactory.users[user] = status
+
+
 # asegurate de correr como root este script antes de correr telnet
+
 # telnet localhost 79
 # mohsez [enter]
+
+# telnet localhost 1079
+# s [enter]
+# hey [enter]
+# crtl+]
+# crtl+d
+
+ff = FingerFactory({b'moshez': b'Happy and well'})
+fsf = FingerSetterFactory(ff)
+
 application = service.Application('finger', uid=1, gid=1) # como root
-factory = FingerFactory({b'moshez': b'Happy and well'})
-strports.service(
-    'tcp:79', # puerto de finger
-    factory,
-    reactor=reactor
-).setServiceParent(
-    service.IServiceCollection(application) # atencion a este. no lo explicaré aun
-)
+
+serviceCollection = service.IServiceCollection(application)
+strports.service('tcp:79', ff).setServiceParent(serviceCollection)
+strports.service('tcp:1079', fsf).setServiceParent(serviceCollection)
