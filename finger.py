@@ -10,7 +10,8 @@ from twisted.protocols import basic
 
 class FingerProtocol(basic.LineReceiver): # LineReceiver es un protocolo que ya tiene los métodos para recibir texto del cliente
     def lineReceived(self, user): # esta vez no estamos dropeando la conexion inmediatamente, ahora esperamos input del cliente
-        self.transport.loseConnection() # y volvemos a hacer nada
+        self.transport.write(b'No such user\r\n') # hacemos una respuesta mock, nunca hay usuarios
+        self.transport.loseConnection()
 
 
 class FingerFactory(protocol.ServerFactory):
@@ -19,9 +20,8 @@ class FingerFactory(protocol.ServerFactory):
 
 def main():
     # qué hace esto? al abrir una consola y escribir `telnet localhost 1079`
-    # escribes algo pulsas enter y... te cierra la conexión
-    # como mínimo el protocolo ahora te pide input, ahora falta que te regrese algo útil
-    # como el usuario
+    # escribes el nombre de un usuario y te regresa: No such user
+    # un servicio finger util para trolear
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
     fingerEndpoint.listen(FingerFactory())
     reactor.run()
