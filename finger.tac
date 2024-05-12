@@ -14,9 +14,6 @@
 # root% twistd -y finger.tac --syslog # just log to syslog
 # root% twistd -y finger.tac --syslog --prefix=twistedfinger # use given prefix
 
-import html
-import os
-import pwd
 from zope.interface import (
     Interface,
     implementer,
@@ -200,24 +197,32 @@ class UserStatusTree(resource.Resource):
         resource.Resource.__init__(self)
         self.service = service
         self.putChild(b'RPC2', UserStatusXR(self.service))
+        self.putChild(b'', self)
+
+    def _cb_render_GET(self, users, request): # demostrando que se pueden cargar plantillas
+        userOutput = ''.join(
+            [f'<li><a href="{bytes2str(user)}">{bytes2str(user)}</a></li>' for user in users]
+        )
+        response_output = str2bytes(
+            '''
+            <html><head><title>Users</title></head><body>
+            <h1>Users</h1>
+            <ul>
+            %s
+            </ul></body></html>'''
+            % userOutput
+        )
+        request.write(response_output)
+        request.finish()
 
     def render_GET(self, request):
         d = self.service.getUsers()
-        def formatUsers(users):
-            l = [f'<li><a href="{user}">{user}</a></li>' for user in users]
-            return '<ul>' + ''.join(l) + '</ul>'
-        d.addCallback(lambda x: [bytes2str(u) for u in x])
-        d.addCallback(formatUsers)
-        d.addCallback(str2bytes)
-        d.addCallback(request.write)
-        d.addCallback(lambda _: request.finish())
+        d.addCallback(self._cb_render_GET, request)
+        # signal that the rendering is not complete
         return server.NOT_DONE_YET
 
     def getChild(self, path, request):
-        if path == b'':
-            return UserStatusTree(self.service)
-        else:
-            return UserStatus(path, self.service)
+        return UserStatus(user=path, service=self.service)
 
 components.registerAdapter(UserStatusTree, IFingerService, resource.IResource)
 
@@ -227,14 +232,20 @@ class UserStatus(resource.Resource):
         self.user = user
         self.service = service
 
+    def _cb_render_GET(self, status, request): # demostrando que se pueden cargar plantillas
+        request.write(
+            b'''<html><head><title>%s</title></head>
+            <body><h1>%s</h1>
+            <p>%s</p>
+            </body></html>'''
+            % (self.user, self.user, status)
+        )
+        request.finish()
+
     def render_GET(self, request):
         d = self.service.getUser(self.user)
-        d.addCallback(bytes2str)
-        d.addCallback(html.escape)
-        d.addCallback(str2bytes)
-        d.addCallback(lambda m: b'<h1>%s</h1>' % self.user + b'<p>%s</p>' % m)
-        d.addCallback(request.write)
-        d.addCallback(lambda _: request.finish())
+        d.addCallback(self._cb_render_GET, request)
+        # signal that the rendering is not complete
         return server.NOT_DONE_YET
 
 class UserStatusXR(xmlrpc.XMLRPC):
@@ -279,27 +290,6 @@ class FingerService(service.Service): # de vuelta para desmostrar un punto
         return defer.succeed(list(self.users.keys()))
 
 
-@implementer(IFingerService)
-class LocalFingerService(service.Service): # recuerda que debes tener instalado finger
-    def getUser(self, user):
-        user = bytes2str(user)
-        user = user.strip()
-        try:
-            entry = pwd.getpwnam(user)
-        except KeyError:
-            return defer.succeed(b'No such user')
-        try:
-            f = open(os.path.join(entry[5], '.plan'))
-        except OSError:
-            return defer.succeed(b'No such user')
-        with f:
-            data = f.read()
-        data = str2bytes(data.strip())
-        return defer.succeed(data)
-
-    def getUsers(self):
-        return defer.succeed([])
-
 # asegurate de correr como root este script antes de correr telnet
 
 # telnet localhost 79
@@ -316,9 +306,10 @@ class LocalFingerService(service.Service): # recuerda que debes tener instalado 
 # xml-rpc -> use the fingerXRclient.py
 
 application = service.Application('finger', uid=1, gid=1) # como root
-f = LocalFingerService() # en cada home de nuestros usuarios del sistema ponemos un archivo .plan con texto
+f = FingerService('/etc/users')
 
 serviceCollection = service.IServiceCollection(application)
+f.setServiceParent(serviceCollection)
 # basicamnete explicado y sin animo de decir que así funciona
 # components.registerAdapter(FingerFactoryFromService, IFingerService, IFingerFactory) [línea 107]
 # más o menos quiere decir (de atrás para adelante)
