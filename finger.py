@@ -5,11 +5,12 @@ from twisted.internet import (
     protocol,
     reactor,
 )
+from twisted.protocols import basic
 
 
-class FingerProtocol(protocol.Protocol): # ofrecemos la primera lógica. al recibir la conexión se la cerramos
-    def connectionMade(self):
-        self.transport.loseConnection()
+class FingerProtocol(basic.LineReceiver): # LineReceiver es un protocolo que ya tiene los métodos para recibir texto del cliente
+    def lineReceived(self, user): # esta vez no estamos dropeando la conexion inmediatamente, ahora esperamos input del cliente
+        self.transport.loseConnection() # y volvemos a hacer nada
 
 
 class FingerFactory(protocol.ServerFactory):
@@ -17,8 +18,10 @@ class FingerFactory(protocol.ServerFactory):
 
 
 def main():
-    # qué hace esto? al abrir una consola y escribir `telnet localhost 1079` te cierra la conexión
-    # eso lo hace la lógica del protocolo
+    # qué hace esto? al abrir una consola y escribir `telnet localhost 1079`
+    # escribes algo pulsas enter y... te cierra la conexión
+    # como mínimo el protocolo ahora te pide input, ahora falta que te regrese algo útil
+    # como el usuario
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
     fingerEndpoint.listen(FingerFactory())
     reactor.run()
