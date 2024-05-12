@@ -1,10 +1,10 @@
 # como correr?
 # python finger.py
 from twisted.internet import (
-    defer,
     endpoints,
     protocol,
     reactor,
+    utils,
 )
 from twisted.protocols import basic
 
@@ -30,7 +30,7 @@ class FingerFactory(protocol.ServerFactory):
         self.users = users
 
     def getUser(self, user):
-        return defer.succeed(self.users.get(user, b'No such user')) # defer.succeed hace lo bloqueanto como no bloqueante y regresa un defer
+        return utils.getProcessOutput(b'finger', [user]) # ahora si tienes instalado finger recibirás la salida finger de tu local
 
 
 def main():
@@ -38,7 +38,9 @@ def main():
     # escribes el nombre de un usuario moshez regresa: Happy and well
     # cualquier otro nombre te regresa: No such user
     # ahora ya hay una fuente de datos intercambiable y tenemos nuestra primera db (un diccionario)
-    # ahora ya empieza parecerse a finger
+    # que de momento es sustituida por el comando finger de tu computadora
+    # ahora si ya es finger, si no tienes finger ponle dir o un comnado de tu computadora
+    # en caso de no querer instalar finger
     fingerEndpoint = endpoints.serverFromString(reactor, 'tcp:1079')
     fingerEndpoint.listen(FingerFactory({b'moshez': b'Happy and well'}))
     reactor.run()
